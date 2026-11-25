@@ -34,6 +34,12 @@ func newRouterWithSpec(t *testing.T, cfg config.Config, spec SpecFunc) *gin.Engi
 	cfg.AdminUsername = "admin"
 	cfg.AdminPassword = "admin"
 
+	for _, limit := range []*int{&cfg.RateLimitGlobal, &cfg.RateLimitAuth, &cfg.RateLimitAI} {
+		if *limit == 0 {
+			*limit = 1000
+		}
+	}
+
 	db, err := database.NewSQLiteMemory()
 	require.NoError(t, err)
 	require.NoError(t, database.Migrate(db))
@@ -195,23 +201,31 @@ func TestProtectedRoutesRequireToken(t *testing.T) {
 }
 
 func TestAuthRoutesAreRateLimited(t *testing.T) {
-	r := newTestRouter(t, config.Config{})
+	r := newTestRouter(t, config.Config{RateLimitAuth: 3})
 
-	for i := 0; i < authRatePerMinute; i++ {
+	for range 3 {
 		assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPost, "/api/auth/login", `{}`, "").Code)
 	}
 	assert.Equal(t, http.StatusTooManyRequests, call(r, http.MethodPost, "/api/auth/login", `{}`, "").Code)
 }
 
 func TestAIRouteIsRateLimitedAfterAuth(t *testing.T) {
-	r := newTestRouter(t, config.Config{})
+	r := newTestRouter(t, config.Config{RateLimitAI: 2})
 	mustRegister(t, r, "budi")
 	token := mustLogin(t, r, "budi", "rahasia123")
 
-	for i := 0; i < aiRatePerMinute; i++ {
+	for range 2 {
 		assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPost, "/api/posts/ai-generate", `{"topic":""}`, token).Code)
 	}
 	assert.Equal(t, http.StatusTooManyRequests, call(r, http.MethodPost, "/api/posts/ai-generate", `{"topic":""}`, token).Code)
+}
+
+func TestGlobalRateLimit(t *testing.T) {
+	r := newTestRouter(t, config.Config{RateLimitGlobal: 2})
+
+	assert.Equal(t, http.StatusOK, call(r, http.MethodGet, "/api/public/categories", "", "").Code)
+	assert.Equal(t, http.StatusOK, call(r, http.MethodGet, "/api/public/categories", "", "").Code)
+	assert.Equal(t, http.StatusTooManyRequests, call(r, http.MethodGet, "/api/public/categories", "", "").Code)
 }
 
 // ---------- Alur menyeluruh ----------
@@ -230,7 +244,7 @@ func TestEndToEndAuthorAndAdminFlow(t *testing.T) {
 
 	// Buat artikel (draf) -> belum tampil di publik.
 	w = call(r, http.MethodPost, "/api/posts",
-		`{"title":"Belajar Gin","category":"Teknologi","excerpt":"ringkas","content":"isi artikel lengkap"}`, token)
+		`{"title":"Belajar Gin","category":"Teknologi","excerpt":"ringkas","content":"isi artikel lengkap","is_published":false}`, token)
 	require.Equal(t, http.StatusCreated, w.Code)
 	postPath := fmt.Sprintf("/api/posts/%d", int(dataOf(t, w).(map[string]any)["id"].(float64)))
 	assert.Equal(t, []any{}, dataOf(t, call(r, http.MethodGet, "/api/public/posts", "", "")))

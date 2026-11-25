@@ -98,6 +98,13 @@ func (f *flakyRepo) Update(p *Post) error {
 	return f.Repository.Update(p)
 }
 
+func (f *flakyRepo) FindByID(id uint) (*Post, error) {
+	if f.boom("FindByID") {
+		return nil, errBoom
+	}
+	return f.Repository.FindByID(id)
+}
+
 func (f *flakyRepo) FindOwned(id, userID uint) (*Post, error) {
 	if f.boom("FindOwned") {
 		return nil, errBoom
@@ -110,6 +117,13 @@ func (f *flakyRepo) FindPublishedBySlug(slug string) (*Post, error) {
 		return nil, errBoom
 	}
 	return f.Repository.FindPublishedBySlug(slug)
+}
+
+func (f *flakyRepo) Delete(id uint) error {
+	if f.boom("Delete") {
+		return errBoom
+	}
+	return f.Repository.Delete(id)
 }
 
 func (f *flakyRepo) DeleteOwned(id, userID uint) error {
@@ -403,22 +417,22 @@ func TestServiceCreate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "belajar-golang", first.Slug)
 	assert.Equal(t, DefaultCategory, first.Category) // kategori kosong -> Umum
-	assert.False(t, first.IsPublished)
-	assert.Nil(t, first.PublishedAt)
+	assert.True(t, first.IsPublished)
+	assert.NotNil(t, first.PublishedAt)
 	assert.Equal(t, 1, first.ReadingTime)
 	assert.Equal(t, "budi", first.Author.Username)
 	assert.Equal(t, "satu dua tiga", first.Content)
 
-	second, err := svc.Create(budi.ID, PostRequest{Title: "Belajar Golang"})
+	second, err := svc.Create(budi.ID, PostRequest{Title: "Belajar Golang", Content: "isi artikel"})
 	require.NoError(t, err)
 	assert.Equal(t, "belajar-golang-2", second.Slug)
 
-	third, err := svc.Create(budi.ID, PostRequest{Title: "belajar golang!!!", CoverImagePath: "/uploads/a.png"})
+	third, err := svc.Create(budi.ID, PostRequest{Title: "belajar golang!!!", Content: "isi artikel", CoverImagePath: "/uploads/a.png"})
 	require.NoError(t, err)
 	assert.Equal(t, "belajar-golang-3", third.Slug)
 	assert.Equal(t, "/uploads/a.png", third.CoverImagePath)
 
-	withURL, err := svc.Create(budi.ID, PostRequest{Title: "Cover URL", CoverImagePath: "https://example.com/c.jpg"})
+	withURL, err := svc.Create(budi.ID, PostRequest{Title: "Cover URL", Content: "isi artikel", CoverImagePath: "https://example.com/c.jpg"})
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/c.jpg", withURL.CoverImagePath)
 }
@@ -479,7 +493,7 @@ func TestServiceReadAndList(t *testing.T) {
 	assert.Equal(t, "isi Milik Budi", got.Content)
 
 	_, err = svc.GetOwned(mine.ID, ani.ID)
-	assert.ErrorIs(t, err, ErrPostNotFound)
+	assert.ErrorIs(t, err, ErrForbidden)
 
 	list, err := svc.ListMine(budi.ID)
 	require.NoError(t, err)
@@ -493,7 +507,7 @@ func TestServiceReadAndList(t *testing.T) {
 
 	stats, err := svc.Stats(budi.ID)
 	require.NoError(t, err)
-	assert.Equal(t, StatsResponse{TotalPosts: 1, TotalPublished: 0, TotalDraft: 1}, *stats)
+	assert.Equal(t, StatsResponse{TotalArticles: 1, TotalSelesai: 0, BelumSelesai: 1, TotalPosts: 1, TotalPublished: 0, TotalDraft: 1}, *stats)
 }
 
 func TestServiceUpdate(t *testing.T) {
@@ -513,7 +527,7 @@ func TestServiceUpdate(t *testing.T) {
 	assert.Equal(t, "konten baru", updated.Content)
 
 	_, err = svc.Update(p.ID, ani.ID, validRequest())
-	assert.ErrorIs(t, err, ErrPostNotFound)
+	assert.ErrorIs(t, err, ErrForbidden)
 
 	var validationErr *ValidationError
 	_, err = svc.Update(p.ID, budi.ID, PostRequest{Title: ""})
@@ -521,7 +535,7 @@ func TestServiceUpdate(t *testing.T) {
 }
 
 func TestServiceUpdatePropagatesRepositoryErrors(t *testing.T) {
-	for _, name := range []string{"FindOwned", "Update"} {
+	for _, name := range []string{"FindByID", "Update"} {
 		t.Run(name, func(t *testing.T) {
 			db := newTestDB(t)
 			budi := seedUser(t, db, "budi", auth.RoleMember)
@@ -557,17 +571,19 @@ func TestServiceTogglePublish(t *testing.T) {
 	assert.Nil(t, draft.PublishedAt)
 
 	_, err = svc.TogglePublish(p.ID, ani.ID)
-	assert.ErrorIs(t, err, ErrPostNotFound)
+	assert.ErrorIs(t, err, ErrForbidden)
 
-	blank, err := svc.Create(budi.ID, PostRequest{Title: "Kosong"})
+	isPub := false
+	blank, err := svc.Create(budi.ID, PostRequest{Title: "Kosong", Content: "isi", IsPublished: &isPub})
 	require.NoError(t, err)
+	require.NoError(t, db.Model(&Post{}).Where("id = ?", blank.ID).Update("content", "").Error)
 	var validationErr *ValidationError
 	_, err = svc.TogglePublish(blank.ID, budi.ID)
 	assert.True(t, errors.As(err, &validationErr))
 }
 
 func TestServiceTogglePublishPropagatesRepositoryErrors(t *testing.T) {
-	for _, name := range []string{"FindOwned", "Update"} {
+	for _, name := range []string{"FindByID", "Update"} {
 		t.Run(name, func(t *testing.T) {
 			db := newTestDB(t)
 			budi := seedUser(t, db, "budi", auth.RoleMember)
@@ -635,8 +651,9 @@ func TestServiceAdmin(t *testing.T) {
 	assert.NotNil(t, noPosts)
 	assert.Len(t, noPosts, 0)
 
-	_, err = svc.ListPostsByUser(999)
-	assert.ErrorIs(t, err, auth.ErrUserNotFound)
+	noUser, err := svc.ListPostsByUser(999)
+	require.NoError(t, err)
+	assert.Empty(t, noUser)
 }
 
 func TestServicePropagatesReadErrors(t *testing.T) {
@@ -647,8 +664,7 @@ func TestServicePropagatesReadErrors(t *testing.T) {
 		"FindPublishedBySlug": func(s *Service) error { _, err := s.GetPublished("x"); return err },
 		"ListUserSummaries":   func(s *Service) error { _, err := s.ListUsers(); return err },
 		"ListAll":             func(s *Service) error { _, err := s.ListAllPosts(); return err },
-		"UserExists":          func(s *Service) error { _, err := s.ListPostsByUser(1); return err },
-		"DeleteOwned":         func(s *Service) error { return s.Delete(1, 1) },
+		"FindByID":            func(s *Service) error { return s.Delete(1, 1) },
 	}
 
 	for name, call := range cases {
@@ -765,7 +781,7 @@ func TestHandlerAuthorFlow(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, call(r, http.MethodGet, "/api/posts", "", "").Code)
 
 	// Create
-	w := call(r, http.MethodPost, "/api/posts", `{"title":"Artikel Pertama","content":"isi artikel"}`, tb)
+	w := call(r, http.MethodPost, "/api/posts", `{"title":"Artikel Pertama","content":"isi artikel","is_published":false}`, tb)
 	require.Equal(t, http.StatusCreated, w.Code)
 	created := dataOf(t, w).(map[string]any)
 	id := int(created["id"].(float64))
@@ -789,8 +805,8 @@ func TestHandlerAuthorFlow(t *testing.T) {
 	// Detail: milik sendiri vs milik orang lain vs ID tidak valid
 	path := fmt.Sprintf("/api/posts/%d", id)
 	assert.Equal(t, http.StatusOK, call(r, http.MethodGet, path, "", tb).Code)
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodGet, path, "", ta).Code)
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodGet, "/api/posts/abc", "", tb).Code)
+	assert.Equal(t, http.StatusForbidden, call(r, http.MethodGet, path, "", ta).Code)
+	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodGet, "/api/posts/abc", "", tb).Code)
 
 	// Update
 	w = call(r, http.MethodPut, path, `{"title":"Judul Diubah","category":"Opini","content":"isi baru"}`, tb)
@@ -798,7 +814,7 @@ func TestHandlerAuthorFlow(t *testing.T) {
 	assert.Equal(t, "artikel-pertama", dataOf(t, w).(map[string]any)["slug"])
 	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPut, path, `{`, tb).Code)
 	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPut, path, `{"title":""}`, tb).Code)
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodPut, path, `{"title":"x"}`, ta).Code)
+	assert.Equal(t, http.StatusForbidden, call(r, http.MethodPut, path, `{"title":"x","content":"isi"}`, ta).Code)
 
 	// Toggle publish
 	w = call(r, http.MethodPatch, path+"/toggle-publish", "", tb)
@@ -808,15 +824,16 @@ func TestHandlerAuthorFlow(t *testing.T) {
 
 	w = call(r, http.MethodPatch, path+"/toggle-publish", "", tb)
 	assert.Equal(t, false, dataOf(t, w).(map[string]any)["is_published"])
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodPatch, path+"/toggle-publish", "", ta).Code)
+	assert.Equal(t, http.StatusForbidden, call(r, http.MethodPatch, path+"/toggle-publish", "", ta).Code)
 
-	w = call(r, http.MethodPost, "/api/posts", `{"title":"Tanpa Isi"}`, tb)
+	w = call(r, http.MethodPost, "/api/posts", `{"title":"Tanpa Isi","content":"isi","is_published":false}`, tb)
 	blankID := int(dataOf(t, w).(map[string]any)["id"].(float64))
+	require.NoError(t, db.Model(&Post{}).Where("id = ?", blankID).Update("content", "").Error)
 	assert.Equal(t, http.StatusBadRequest,
 		call(r, http.MethodPatch, fmt.Sprintf("/api/posts/%d/toggle-publish", blankID), "", tb).Code)
 
 	// Delete
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodDelete, path, "", ta).Code)
+	assert.Equal(t, http.StatusForbidden, call(r, http.MethodDelete, path, "", ta).Code)
 	assert.Equal(t, http.StatusOK, call(r, http.MethodDelete, path, "", tb).Code)
 	assert.Equal(t, http.StatusNotFound, call(r, http.MethodDelete, path, "", tb).Code)
 }
@@ -848,8 +865,8 @@ func TestHandlerAdmin(t *testing.T) {
 
 	path := fmt.Sprintf("/api/admin/users/%d/posts", budi.ID)
 	assert.Len(t, dataOf(t, call(r, http.MethodGet, path, "", ta)), 2)
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodGet, "/api/admin/users/999/posts", "", ta).Code)
-	assert.Equal(t, http.StatusNotFound, call(r, http.MethodGet, "/api/admin/users/abc/posts", "", ta).Code)
+	assert.Equal(t, http.StatusOK, call(r, http.MethodGet, "/api/admin/users/999/posts", "", ta).Code)
+	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodGet, "/api/admin/users/abc/posts", "", ta).Code)
 }
 
 func TestHandlerServerErrors(t *testing.T) {
@@ -864,10 +881,10 @@ func TestHandlerServerErrors(t *testing.T) {
 		{http.MethodGet, "/api/public/posts", ""},
 		{http.MethodGet, "/api/public/posts/x", ""},
 		{http.MethodGet, "/api/posts", ""},
-		{http.MethodPost, "/api/posts", `{"title":"x"}`},
+		{http.MethodPost, "/api/posts", `{"title":"x","content":"isi"}`},
 		{http.MethodGet, "/api/posts/stats", ""},
 		{http.MethodGet, "/api/posts/1", ""},
-		{http.MethodPut, "/api/posts/1", `{"title":"x"}`},
+		{http.MethodPut, "/api/posts/1", `{"title":"x","content":"isi"}`},
 		{http.MethodPatch, "/api/posts/1/toggle-publish", ""},
 		{http.MethodDelete, "/api/posts/1", ""},
 		{http.MethodGet, "/api/admin/users", ""},

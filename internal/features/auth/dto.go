@@ -16,6 +16,7 @@ type LoginRequest struct {
 type UpdateProfileRequest struct {
 	Username string `json:"username" example:"budi_baru"`
 	Email    string `json:"email" example:"budi.baru@example.com"`
+	Password string `json:"password,omitempty" example:"rahasia123"`
 }
 
 type UserResponse struct {

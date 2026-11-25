@@ -34,7 +34,7 @@ func writeError(c *gin.Context, err error) {
 	case errors.As(err, &validationErr):
 		response.Fail(c, http.StatusBadRequest, validationErr.Message)
 	case errors.Is(err, ErrUsernameTaken), errors.Is(err, ErrEmailTaken):
-		response.Fail(c, http.StatusConflict, err.Error())
+		response.Fail(c, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrInvalidCredentials), errors.Is(err, ErrUserNotFound):
 		response.Fail(c, http.StatusUnauthorized, err.Error())
 	default:
@@ -59,12 +59,12 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	user, err := h.service.Register(req)
+	res, err := h.service.Register(req)
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-	response.Success(c, http.StatusCreated, "Registrasi berhasil", ToUserResponse(*user))
+	response.Success(c, http.StatusCreated, "Registrasi berhasil", res)
 }
 
 // Login godoc

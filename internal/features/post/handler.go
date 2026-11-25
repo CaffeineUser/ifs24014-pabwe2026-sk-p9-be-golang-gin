@@ -45,6 +45,8 @@ func writeError(c *gin.Context, err error) {
 	switch {
 	case errors.As(err, &validationErr):
 		response.Fail(c, http.StatusBadRequest, validationErr.Message)
+	case errors.Is(err, ErrForbidden):
+		response.Fail(c, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrPostNotFound), errors.Is(err, auth.ErrUserNotFound):
 		response.Fail(c, http.StatusNotFound, err.Error())
 	default:
@@ -52,10 +54,14 @@ func writeError(c *gin.Context, err error) {
 	}
 }
 
-// parseID: ID tidak valid menghasilkan 0, yang tidak pernah ditemukan (-> 404).
-func parseID(c *gin.Context) uint {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
-	return uint(id)
+// parseID memvalidasi parameter ID. Jika bukan angka positif, kembalikan 400.
+func parseID(c *gin.Context) (uint, bool) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil || id == 0 {
+		response.Fail(c, http.StatusBadRequest, "ID harus berupa angka positif")
+		return 0, false
+	}
+	return uint(id), true
 }
 
 func currentUserID(c *gin.Context) uint {
@@ -174,7 +180,11 @@ func (h *Handler) Stats(c *gin.Context) {
 // @Failure   404 {object} response.Body
 // @Router    /posts/{id} [get]
 func (h *Handler) GetOwned(c *gin.Context) {
-	post, err := h.service.GetOwned(parseID(c), currentUserID(c))
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	post, err := h.service.GetOwned(id, currentUserID(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -195,13 +205,17 @@ func (h *Handler) GetOwned(c *gin.Context) {
 // @Failure   404 {object} response.Body
 // @Router    /posts/{id} [put]
 func (h *Handler) Update(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
 	var req PostRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, http.StatusBadRequest, "Format data tidak valid")
 		return
 	}
 
-	post, err := h.service.Update(parseID(c), currentUserID(c), req)
+	post, err := h.service.Update(id, currentUserID(c), req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -220,7 +234,11 @@ func (h *Handler) Update(c *gin.Context) {
 // @Failure   404 {object} response.Body
 // @Router    /posts/{id}/toggle-publish [patch]
 func (h *Handler) TogglePublish(c *gin.Context) {
-	post, err := h.service.TogglePublish(parseID(c), currentUserID(c))
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	post, err := h.service.TogglePublish(id, currentUserID(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -238,7 +256,11 @@ func (h *Handler) TogglePublish(c *gin.Context) {
 // @Failure   404 {object} response.Body
 // @Router    /posts/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
-	if err := h.service.Delete(parseID(c), currentUserID(c)); err != nil {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if err := h.service.Delete(id, currentUserID(c)); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -289,7 +311,11 @@ func (h *Handler) AdminPosts(c *gin.Context) {
 // @Failure   404 {object} response.Body
 // @Router    /admin/users/{id}/posts [get]
 func (h *Handler) AdminUserPosts(c *gin.Context) {
-	posts, err := h.service.ListPostsByUser(parseID(c))
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	posts, err := h.service.ListPostsByUser(id)
 	if err != nil {
 		writeError(c, err)
 		return

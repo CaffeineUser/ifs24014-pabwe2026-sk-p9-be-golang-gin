@@ -9,6 +9,7 @@ type PostRequest struct {
 	Excerpt        string `json:"excerpt" example:"Ringkasan singkat artikel."`
 	Content        string `json:"content" example:"Isi artikel dalam format Markdown."`
 	CoverImagePath string `json:"cover_image_path" example:"https://example.com/cover.jpg"`
+	IsPublished    *bool  `json:"is_published" example:"true"`
 }
 
 type AuthorResponse struct {
@@ -20,6 +21,7 @@ type AuthorResponse struct {
 // ReadingTime dalam menit.
 type PostResponse struct {
 	ID             uint           `json:"id"`
+	UserID         uint           `json:"user_id"`
 	Title          string         `json:"title"`
 	Slug           string         `json:"slug"`
 	Category       string         `json:"category"`
@@ -30,11 +32,15 @@ type PostResponse struct {
 	PublishedAt    *time.Time     `json:"published_at"`
 	ReadingTime    int            `json:"reading_time"`
 	Author         AuthorResponse `json:"author"`
+	AuthorName     string         `json:"author_name"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 type StatsResponse struct {
+	TotalArticles  int64 `json:"total_articles"`
+	TotalSelesai   int64 `json:"total_selesai"`
+	BelumSelesai   int64 `json:"belum_selesai"`
 	TotalPosts     int64 `json:"total_posts"`
 	TotalPublished int64 `json:"total_published"`
 	TotalDraft     int64 `json:"total_draft"`
@@ -47,13 +53,17 @@ type UserSummary struct {
 	Email          string    `json:"email"`
 	Role           string    `json:"role"`
 	CreatedAt      time.Time `json:"created_at"`
+	TotalArticles  int64     `json:"total_articles"`
 	TotalPosts     int64     `json:"total_posts"`
+	TotalSelesai   int64     `json:"total_selesai"`
 	TotalPublished int64     `json:"total_published"`
 }
 
 func toResponse(p Post, withContent bool) PostResponse {
+	username := p.User.Username
 	res := PostResponse{
 		ID:             p.ID,
+		UserID:         p.UserID,
 		Title:          p.Title,
 		Slug:           p.Slug,
 		Category:       p.Category,
@@ -62,7 +72,8 @@ func toResponse(p Post, withContent bool) PostResponse {
 		IsPublished:    p.IsPublished,
 		PublishedAt:    p.PublishedAt,
 		ReadingTime:    ReadingTime(p.Content),
-		Author:         AuthorResponse{ID: p.User.ID, Username: p.User.Username},
+		AuthorName:     p.User.Username,
+		Author:         AuthorResponse{ID: p.User.ID, Username: username},
 		CreatedAt:      p.CreatedAt,
 		UpdatedAt:      p.UpdatedAt,
 	}

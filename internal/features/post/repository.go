@@ -12,8 +12,10 @@ import (
 type Repository interface {
 	Create(p *Post) error
 	Update(p *Post) error
+	FindByID(id uint) (*Post, error)
 	FindOwned(id, userID uint) (*Post, error)
 	FindPublishedBySlug(slug string) (*Post, error)
+	Delete(id uint) error
 	DeleteOwned(id, userID uint) error
 	SlugExists(slug string, excludeID uint) (bool, error)
 	ListByUser(userID uint) ([]Post, error)
@@ -52,9 +54,24 @@ func (r *gormRepository) Update(p *Post) error {
 	return r.db.Omit("User").Save(p).Error
 }
 
+func (r *gormRepository) FindByID(id uint) (*Post, error) {
+	return r.first(r.db.Where("id = ?", id))
+}
+
 // FindOwned hanya menemukan artikel milik userID (artikel orang lain = tidak ditemukan).
 func (r *gormRepository) FindOwned(id, userID uint) (*Post, error) {
 	return r.first(r.db.Where("id = ? AND user_id = ?", id, userID))
+}
+
+func (r *gormRepository) Delete(id uint) error {
+	res := r.db.Delete(&Post{}, id)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrPostNotFound
+	}
+	return nil
 }
 
 func (r *gormRepository) FindPublishedBySlug(slug string) (*Post, error) {
@@ -141,7 +158,9 @@ func (r *gormRepository) ListUserSummaries() ([]UserSummary, error) {
 	err := r.db.Table("users").
 		Select("users.id, users.username, users.email, users.role, users.created_at, " +
 			"COUNT(posts.id) AS total_posts, " +
-			"COUNT(CASE WHEN posts.is_published THEN 1 END) AS total_published").
+			"COUNT(posts.id) AS total_articles, " +
+			"COUNT(CASE WHEN posts.is_published THEN 1 END) AS total_published, " +
+			"COUNT(CASE WHEN posts.is_published THEN 1 END) AS total_selesai").
 		Joins("LEFT JOIN posts ON posts.user_id = users.id").
 		Group("users.id").
 		Order("users.id").

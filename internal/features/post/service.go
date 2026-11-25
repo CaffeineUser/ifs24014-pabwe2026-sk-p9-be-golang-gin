@@ -7,8 +7,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"app/internal/features/auth"
 )
 
 const (
@@ -21,7 +19,10 @@ const (
 	fallbackSlug     = "artikel"
 )
 
-var ErrPostNotFound = errors.New("Artikel tidak ditemukan")
+var (
+	ErrPostNotFound = errors.New("Artikel tidak ditemukan")
+	ErrForbidden    = errors.New("Anda tidak memiliki akses ke artikel ini")
+)
 
 // ValidationError dipetakan handler menjadi HTTP 400.
 type ValidationError struct {
@@ -82,6 +83,8 @@ func normalize(req PostRequest) (PostRequest, error) {
 	switch {
 	case req.Title == "" || utf8.RuneCountInString(req.Title) > maxTitleLength:
 		return req, &ValidationError{Message: "Judul wajib diisi dan maksimal 255 karakter"}
+	case req.Content == "":
+		return req, &ValidationError{Message: "Konten wajib diisi"}
 	case !IsValidCategory(req.Category):
 		return req, &ValidationError{Message: "Kategori tidak valid. Pilihan: " + strings.Join(Categories, ", ")}
 	case utf8.RuneCountInString(req.Excerpt) > maxExcerptLength:
@@ -140,6 +143,16 @@ func (s *Service) Create(userID uint, req PostRequest) (*PostResponse, error) {
 		return nil, err
 	}
 
+	isPublished := true
+	if req.IsPublished != nil {
+		isPublished = *req.IsPublished
+	}
+	var publishedAt *time.Time
+	if isPublished {
+		now := s.now()
+		publishedAt = &now
+	}
+
 	post := &Post{
 		UserID:         userID,
 		Title:          req.Title,
@@ -148,6 +161,8 @@ func (s *Service) Create(userID uint, req PostRequest) (*PostResponse, error) {
 		Excerpt:        req.Excerpt,
 		Content:        req.Content,
 		CoverImagePath: req.CoverImagePath,
+		IsPublished:    isPublished,
+		PublishedAt:    publishedAt,
 	}
 	if err := s.repo.Create(post); err != nil {
 		return nil, err
@@ -164,7 +179,15 @@ func (s *Service) ListMine(userID uint) ([]PostResponse, error) {
 }
 
 func (s *Service) GetOwned(id, userID uint) (*PostResponse, error) {
-	return s.detailOwned(id, userID)
+	post, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if post.UserID != userID {
+		return nil, ErrForbidden
+	}
+	res := toResponse(*post, true)
+	return &res, nil
 }
 
 // Update tidak mengubah slug agar tautan lama tetap berlaku.
@@ -174,9 +197,12 @@ func (s *Service) Update(id, userID uint, req PostRequest) (*PostResponse, error
 		return nil, err
 	}
 
-	post, err := s.repo.FindOwned(id, userID)
+	post, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if post.UserID != userID {
+		return nil, ErrForbidden
 	}
 
 	post.Title = req.Title
@@ -184,6 +210,15 @@ func (s *Service) Update(id, userID uint, req PostRequest) (*PostResponse, error
 	post.Excerpt = req.Excerpt
 	post.Content = req.Content
 	post.CoverImagePath = req.CoverImagePath
+	if req.IsPublished != nil {
+		post.IsPublished = *req.IsPublished
+		if post.IsPublished && post.PublishedAt == nil {
+			now := s.now()
+			post.PublishedAt = &now
+		} else if !post.IsPublished {
+			post.PublishedAt = nil
+		}
+	}
 	if err := s.repo.Update(post); err != nil {
 		return nil, err
 	}
@@ -194,9 +229,12 @@ func (s *Service) Update(id, userID uint, req PostRequest) (*PostResponse, error
 
 // TogglePublish membalik status Draf <-> Terbit beserta published_at.
 func (s *Service) TogglePublish(id, userID uint) (*PostResponse, error) {
-	post, err := s.repo.FindOwned(id, userID)
+	post, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if post.UserID != userID {
+		return nil, ErrForbidden
 	}
 
 	if post.IsPublished {
@@ -219,7 +257,14 @@ func (s *Service) TogglePublish(id, userID uint) (*PostResponse, error) {
 }
 
 func (s *Service) Delete(id, userID uint) error {
-	return s.repo.DeleteOwned(id, userID)
+	post, err := s.repo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	if post.UserID != userID {
+		return ErrForbidden
+	}
+	return s.repo.Delete(id)
 }
 
 func (s *Service) Stats(userID uint) (*StatsResponse, error) {
@@ -227,7 +272,15 @@ func (s *Service) Stats(userID uint) (*StatsResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &StatsResponse{TotalPosts: total, TotalPublished: published, TotalDraft: total - published}, nil
+	draft := total - published
+	return &StatsResponse{
+		TotalArticles:  total,
+		TotalSelesai:   published,
+		BelumSelesai:   draft,
+		TotalPosts:     total,
+		TotalPublished: published,
+		TotalDraft:     draft,
+	}, nil
 }
 
 // ---------- Publik ----------
@@ -270,14 +323,6 @@ func (s *Service) ListAllPosts() ([]PostResponse, error) {
 }
 
 func (s *Service) ListPostsByUser(userID uint) ([]PostResponse, error) {
-	exists, err := s.repo.UserExists(userID)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, auth.ErrUserNotFound
-	}
-
 	posts, err := s.repo.ListByUser(userID)
 	if err != nil {
 		return nil, err

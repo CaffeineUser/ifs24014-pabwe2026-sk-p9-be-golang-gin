@@ -17,11 +17,6 @@ import (
 	"app/internal/response"
 )
 
-const (
-	authRatePerMinute = 10 // login & register
-	aiRatePerMinute   = 5  // ai-generate
-)
-
 // SpecFunc menghasilkan spesifikasi OpenAPI (JSON) untuk host dan skema pemanggil.
 type SpecFunc func(host, scheme string) ([]byte, error)
 
@@ -32,7 +27,7 @@ func NewRouter(cfg config.Config, db *gorm.DB, specJSON SpecFunc) *gin.Engine {
 		response.AbortError(c, http.StatusInternalServerError, "Terjadi kesalahan pada server")
 	}))
 	_ = r.SetTrustedProxies(nil) // ClientIP memakai alamat koneksi asli
-	r.Use(middleware.CORS(), middleware.RateLimiter())
+	r.Use(middleware.CORS(), middleware.NewRateLimiter(cfg.RateLimitGlobal, time.Minute))
 
 	authService := auth.NewService(auth.NewRepository(db), cfg.AppKey, auth.TokenTTL)
 	postService := post.NewService(post.NewRepository(db))
@@ -43,13 +38,13 @@ func NewRouter(cfg config.Config, db *gorm.DB, specJSON SpecFunc) *gin.Engine {
 
 	authMiddleware := middleware.Auth(cfg.AppKey)
 	public := r.Group("/api")
-	authPublic := r.Group("/api", middleware.NewRateLimiter(authRatePerMinute, time.Minute))
+	authPublic := r.Group("/api", middleware.NewRateLimiter(cfg.RateLimitAuth, time.Minute))
 	protected := r.Group("/api", authMiddleware)
 	admin := r.Group("/api/admin", authMiddleware, middleware.RequireRole(auth.RoleAdmin))
 
 	auth.NewHandler(authService).RegisterRoutes(authPublic, protected)
 	post.NewHandler(postService).RegisterRoutes(public, protected, admin)
-	ai.NewHandler(aiService).RegisterRoutes(protected, middleware.NewRateLimiter(aiRatePerMinute, time.Minute))
+	ai.NewHandler(aiService).RegisterRoutes(protected, middleware.NewRateLimiter(cfg.RateLimitAI, time.Minute))
 
 	r.GET("/api.json", specHandler(specJSON))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/api.json")))

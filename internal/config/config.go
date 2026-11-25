@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -28,6 +29,19 @@ type Config struct {
 	OpenAIEndpoint       string
 	OpenAIKey            string
 	OpenAIModel          string
+
+	RateLimitGlobal int
+	RateLimitAuth   int
+	RateLimitAI     int
+}
+
+// getEnvInt membaca bilangan bulat positif; nilai kosong, rusak, atau <= 0 memakai fallback.
+func getEnvInt(key string, fallback int) int {
+	value, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func Load() Config {
@@ -54,6 +68,9 @@ func Load() Config {
 		OpenAIEndpoint:       getEnv("OPENAI_ENDPOINT", "https://delcom.org/api/v1"),
 		OpenAIKey:            getEnv("OPENAI_KEY", ""),
 		OpenAIModel:          getEnv("OPENAI_MODEL", ""),
+		RateLimitGlobal:      getEnvInt("RATE_LIMIT_GLOBAL", 1000),
+		RateLimitAuth:        getEnvInt("RATE_LIMIT_AUTH", 300),
+		RateLimitAI:          getEnvInt("RATE_LIMIT_AI", 30),
 	}
 }
 

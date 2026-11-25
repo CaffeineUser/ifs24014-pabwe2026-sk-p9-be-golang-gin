@@ -53,6 +53,7 @@ func newService(repo Repository) *Service {
 type flakyRepo struct {
 	Repository
 	failCreate, failUpdate, failFindByID, failFindByUsername bool
+	failFindByEmail                                          bool
 	failUsernameExists, failEmailExists                      bool
 }
 
@@ -82,6 +83,13 @@ func (f *flakyRepo) FindByUsername(name string) (*User, error) {
 		return nil, errBoom
 	}
 	return f.Repository.FindByUsername(name)
+}
+
+func (f *flakyRepo) FindByEmail(email string) (*User, error) {
+	if f.failFindByEmail {
+		return nil, errBoom
+	}
+	return f.Repository.FindByEmail(email)
 }
 
 func (f *flakyRepo) UsernameExists(name string, id uint) (bool, error) {
@@ -180,14 +188,13 @@ func TestRepositoryErrorsWhenDBClosed(t *testing.T) {
 func TestRegisterSuccess(t *testing.T) {
 	svc := newService(NewRepository(newTestDB(t)))
 
-	user, err := svc.Register(RegisterRequest{Username: "  budi_01 ", Email: " Budi@Example.COM ", Password: "rahasia123"})
+	res, err := svc.Register(RegisterRequest{Username: "  budi_01 ", Email: " Budi@Example.COM ", Password: "rahasia123"})
 	require.NoError(t, err)
 
-	assert.Equal(t, "budi_01", user.Username)
-	assert.Equal(t, "budi@example.com", user.Email)
-	assert.Equal(t, RoleMember, user.Role)
-	assert.NotEqual(t, "rahasia123", user.Password)
-	assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.Password), []byte("rahasia123")))
+	assert.Equal(t, "budi_01", res.User.Username)
+	assert.Equal(t, "budi@example.com", res.User.Email)
+	assert.Equal(t, RoleMember, res.User.Role)
+	assert.NotEmpty(t, res.Token)
 }
 
 func TestRegisterValidation(t *testing.T) {
@@ -210,8 +217,8 @@ func TestRegisterValidation(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			user, err := svc.Register(tc.req)
-			assert.Nil(t, user)
+			res, err := svc.Register(tc.req)
+			assert.Nil(t, res)
 
 			var validationErr *ValidationError
 			require.True(t, errors.As(err, &validationErr))
@@ -265,8 +272,13 @@ func TestLoginSuccessAndTokenClaims(t *testing.T) {
 
 	result, err := svc.Login(LoginRequest{Username: "BUDI_01", Password: "rahasia123"}) // case-insensitive
 	require.NoError(t, err)
-	assert.Equal(t, registered.ID, result.User.ID)
+	assert.Equal(t, registered.User.ID, result.User.ID)
 	assert.Equal(t, RoleMember, result.User.Role)
+
+	// Login dengan email juga berhasil
+	resultEmail, err := svc.Login(LoginRequest{Username: "budi@example.com", Password: "rahasia123"})
+	require.NoError(t, err)
+	assert.Equal(t, registered.User.ID, resultEmail.User.ID)
 
 	claims := &middleware.Claims{}
 	_, err = jwt.ParseWithClaims(result.Token, claims,
@@ -274,7 +286,7 @@ func TestLoginSuccessAndTokenClaims(t *testing.T) {
 		jwt.WithTimeFunc(func() time.Time { return fixed }),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, registered.ID, claims.UserID)
+	assert.Equal(t, registered.User.ID, claims.UserID)
 	assert.Equal(t, "budi_01", claims.Username)
 	assert.Equal(t, RoleMember, claims.Role)
 	assert.True(t, claims.ExpiresAt.Time.Equal(fixed.Add(time.Hour)))
@@ -322,7 +334,7 @@ func TestGetProfile(t *testing.T) {
 	registered, err := svc.Register(validRegister())
 	require.NoError(t, err)
 
-	user, err := svc.GetProfile(registered.ID)
+	user, err := svc.GetProfile(registered.User.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "budi_01", user.Username)
 
@@ -338,25 +350,33 @@ func TestUpdateProfile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mengirim ulang data milik sendiri diperbolehkan.
-	same, err := svc.UpdateProfile(budi.ID, UpdateProfileRequest{Username: "budi_01", Email: "budi@example.com"})
+	same, err := svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Username: "budi_01", Email: "budi@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, "budi_01", same.Username)
 
-	updated, err := svc.UpdateProfile(budi.ID, UpdateProfileRequest{Username: " Budi_Baru ", Email: "Baru@Example.com"})
+	updated, err := svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Username: " Budi_Baru ", Email: "Baru@Example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, "Budi_Baru", updated.Username)
 	assert.Equal(t, "baru@example.com", updated.Email)
 	assert.Equal(t, RoleMember, updated.Role)
 
-	_, err = svc.UpdateProfile(budi.ID, UpdateProfileRequest{Username: "ANI", Email: "baru@example.com"})
+	// Update password
+	withPwd, err := svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Password: "passwordbaru123"})
+	require.NoError(t, err)
+	assert.NotNil(t, withPwd)
+	loginWithNewPwd, err := svc.Login(LoginRequest{Username: "Budi_Baru", Password: "passwordbaru123"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, loginWithNewPwd.Token)
+
+	_, err = svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Username: "ANI", Email: "baru@example.com"})
 	assert.ErrorIs(t, err, ErrUsernameTaken)
-	_, err = svc.UpdateProfile(budi.ID, UpdateProfileRequest{Username: "budi_baru", Email: "ANI@example.com"})
+	_, err = svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Username: "budi_baru", Email: "ANI@example.com"})
 	assert.ErrorIs(t, err, ErrEmailTaken)
 
 	var validationErr *ValidationError
-	_, err = svc.UpdateProfile(budi.ID, UpdateProfileRequest{Username: "x", Email: "a@b.co"})
+	_, err = svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Username: "x", Email: "a@b.co"})
 	assert.True(t, errors.As(err, &validationErr))
-	_, err = svc.UpdateProfile(budi.ID, UpdateProfileRequest{Username: "budi_baru", Email: "salah"})
+	_, err = svc.UpdateProfile(budi.User.ID, UpdateProfileRequest{Username: "budi_baru", Email: "salah"})
 	assert.True(t, errors.As(err, &validationErr))
 
 	_, err = svc.UpdateProfile(999, UpdateProfileRequest{Username: "budi_baru", Email: "a@b.co"})
@@ -378,7 +398,7 @@ func TestUpdateProfilePropagatesRepositoryErrors(t *testing.T) {
 			require.NoError(t, err)
 
 			flaky.Repository = base
-			_, err = newService(flaky).UpdateProfile(seed.ID, UpdateProfileRequest{Username: "budi_baru", Email: "baru@example.com"})
+			_, err = newService(flaky).UpdateProfile(seed.User.ID, UpdateProfileRequest{Username: "budi_baru", Email: "baru@example.com"})
 			assert.ErrorIs(t, err, errBoom)
 		})
 	}
@@ -432,12 +452,14 @@ func TestHandlerRegister(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 	body := decodeBody(t, w)
 	assert.Equal(t, "success", body["status"])
-	assert.Equal(t, "member", body["data"].(map[string]any)["role"])
+	data := body["data"].(map[string]any)
+	assert.Equal(t, "member", data["user"].(map[string]any)["role"])
+	assert.NotEmpty(t, data["token"])
 	assert.NotContains(t, w.Body.String(), "password")
 
 	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPost, "/api/auth/register", `{`, "").Code)
 	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPost, "/api/auth/register", `{"username":"a"}`, "").Code)
-	assert.Equal(t, http.StatusConflict, call(r, http.MethodPost, "/api/auth/register", budiJSON, "").Code)
+	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPost, "/api/auth/register", budiJSON, "").Code)
 }
 
 func TestHandlerRegisterServerError(t *testing.T) {
@@ -507,6 +529,6 @@ func TestHandlerUpdateProfile(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPut, "/api/auth/profile", `{`, token).Code)
 	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPut, "/api/auth/profile", `{"username":"x","email":"a@b.co"}`, token).Code)
-	assert.Equal(t, http.StatusConflict, call(r, http.MethodPut, "/api/auth/profile", `{"username":"ANI","email":"baru@x.id"}`, token).Code)
+	assert.Equal(t, http.StatusBadRequest, call(r, http.MethodPut, "/api/auth/profile", `{"username":"ANI","email":"baru@x.id"}`, token).Code)
 	assert.Equal(t, http.StatusUnauthorized, call(r, http.MethodPut, "/api/auth/profile", `{"username":"budi_baru","email":"baru@x.id"}`, "").Code)
 }

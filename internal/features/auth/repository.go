@@ -11,6 +11,7 @@ type Repository interface {
 	Create(user *User) error
 	FindByID(id uint) (*User, error)
 	FindByUsername(username string) (*User, error)
+	FindByEmail(email string) (*User, error)
 	UsernameExists(username string, excludeID uint) (bool, error)
 	EmailExists(email string, excludeID uint) (bool, error)
 	Update(user *User) error
@@ -35,6 +36,11 @@ func (r *gormRepository) FindByID(id uint) (*User, error) {
 // FindByUsername tidak membedakan huruf besar-kecil.
 func (r *gormRepository) FindByUsername(username string) (*User, error) {
 	return r.first("LOWER(username) = LOWER(?)", username)
+}
+
+// FindByEmail tidak membedakan huruf besar-kecil.
+func (r *gormRepository) FindByEmail(email string) (*User, error) {
+	return r.first("LOWER(email) = LOWER(?)", email)
 }
 
 func (r *gormRepository) first(query string, arg any) (*User, error) {

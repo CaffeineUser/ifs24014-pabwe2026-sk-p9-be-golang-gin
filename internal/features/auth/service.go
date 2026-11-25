@@ -99,8 +99,8 @@ func (s *Service) ensureUnique(username, email string, excludeID uint) error {
 	return nil
 }
 
-// Register membuat akun baru. Role SELALU member.
-func (s *Service) Register(req RegisterRequest) (*User, error) {
+// Register membuat akun baru dan menerbitkan token JWT. Role SELALU member.
+func (s *Service) Register(req RegisterRequest) (*AuthResponse, error) {
 	username := strings.TrimSpace(req.Username)
 	email := normalizeEmail(req.Email)
 
@@ -124,17 +124,29 @@ func (s *Service) Register(req RegisterRequest) (*User, error) {
 	if err := s.repo.Create(user); err != nil {
 		return nil, err
 	}
-	return user, nil
+
+	token, err := s.generateToken(user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &AuthResponse{
+		Token: token,
+		User:  ToUserResponse(*user),
+	}, nil
 }
 
-// Login memverifikasi kredensial lalu menerbitkan JWT.
+// Login memverifikasi kredensial (username atau email) lalu menerbitkan JWT.
 func (s *Service) Login(req LoginRequest) (*AuthResponse, error) {
-	username := strings.TrimSpace(req.Username)
-	if username == "" || req.Password == "" {
+	identifier := strings.TrimSpace(req.Username)
+	if identifier == "" || req.Password == "" {
 		return nil, &ValidationError{Message: "Username dan password wajib diisi"}
 	}
 
-	user, err := s.repo.FindByUsername(username)
+	user, err := s.repo.FindByUsername(identifier)
+	if errors.Is(err, ErrUserNotFound) {
+		user, err = s.repo.FindByEmail(identifier)
+	}
 	if errors.Is(err, ErrUserNotFound) {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
 		return nil, ErrInvalidCredentials
@@ -172,10 +184,24 @@ func (s *Service) GetProfile(id uint) (*User, error) {
 	return s.repo.FindByID(id)
 }
 
-// UpdateProfile mengubah username & email (role tidak bisa diubah).
+// UpdateProfile mengubah username, email, dan/atau password (role tidak bisa diubah).
 func (s *Service) UpdateProfile(id uint, req UpdateProfileRequest) (*User, error) {
 	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		user, err := s.repo.FindByID(id)
+		if err != nil {
+			return nil, err
+		}
+		username = user.Username
+	}
 	email := normalizeEmail(req.Email)
+	if email == "" {
+		user, err := s.repo.FindByID(id)
+		if err != nil {
+			return nil, err
+		}
+		email = user.Email
+	}
 
 	if err := validateIdentity(username, email); err != nil {
 		return nil, err
@@ -187,6 +213,17 @@ func (s *Service) UpdateProfile(id uint, req UpdateProfileRequest) (*User, error
 	}
 	if err := s.ensureUnique(username, email, id); err != nil {
 		return nil, err
+	}
+
+	if req.Password != "" {
+		if err := validatePassword(req.Password); err != nil {
+			return nil, err
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), s.cost)
+		if err != nil {
+			return nil, &ValidationError{Message: "Password terlalu panjang (maksimal 72 byte)"}
+		}
+		user.Password = string(hash)
 	}
 
 	user.Username = username
