@@ -65,12 +65,12 @@ func Load() Config {
 
 		SearchEngineEndpoint: getEnv("SEARCH_ENGINE_ENDPOINT", "https://delcom.org/api/v1/search"),
 		SearchEngineKey:      getEnv("SEARCH_ENGINE_KEY", ""),
-		OpenAIEndpoint:       getEnv("OPENAI_ENDPOINT", "https://delcom.org/api/v1"),
-		OpenAIKey:            getEnv("OPENAI_KEY", ""),
-		OpenAIModel:          getEnv("OPENAI_MODEL", ""),
-		RateLimitGlobal:      getEnvInt("RATE_LIMIT_GLOBAL", 1000),
-		RateLimitAuth:        getEnvInt("RATE_LIMIT_AUTH", 300),
-		RateLimitAI:          getEnvInt("RATE_LIMIT_AI", 30),
+		OpenAIEndpoint:       getEnv("OPENAI_ENDPOINT", getEnv("OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")),
+		OpenAIKey:            getEnv("OPENAI_KEY", getEnv("OPENAI_API_KEY", getEnv("GEMINI_API_KEY", ""))),
+		OpenAIModel:          getEnv("OPENAI_MODEL", "gemini-3.5-flash-lite"),
+		RateLimitGlobal:      getEnvInt("RATE_LIMIT_GLOBAL", 10000),
+		RateLimitAuth:        getEnvInt("RATE_LIMIT_AUTH", 10000),
+		RateLimitAI:          getEnvInt("RATE_LIMIT_AI", 1000),
 	}
 }
 

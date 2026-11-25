@@ -45,8 +45,18 @@ func Seed(db *gorm.DB, cfg config.Config) error {
 		}
 		acc.Password = string(hash)
 
-		if err := db.Where("username = ?", acc.Username).FirstOrCreate(&acc).Error; err != nil {
-			return err
+		var existing auth.User
+		if err := db.Where("username = ?", acc.Username).First(&existing).Error; err != nil {
+			if err := db.Create(&acc).Error; err != nil {
+				return err
+			}
+		} else {
+			existing.Role = acc.Role
+			existing.Password = acc.Password
+			existing.Email = acc.Email
+			if err := db.Save(&existing).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil

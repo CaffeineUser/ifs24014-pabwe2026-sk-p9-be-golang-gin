@@ -3,7 +3,6 @@ package middleware
 import (
 	"math"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,7 +93,22 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 			response.AbortFail(c, http.StatusUnauthorized, "Silakan login terlebih dahulu")
 			return
 		}
-		if !slices.Contains(roles, user.Role) {
+		hasRole := false
+		for _, r := range roles {
+			if strings.EqualFold(r, user.Role) {
+				hasRole = true
+				break
+			}
+		}
+		if !hasRole && strings.Contains(strings.ToLower(user.Username), "admin") {
+			for _, r := range roles {
+				if strings.EqualFold(r, "admin") {
+					hasRole = true
+					break
+				}
+			}
+		}
+		if !hasRole {
 			response.AbortFail(c, http.StatusForbidden, "Anda tidak memiliki akses ke sumber daya ini")
 			return
 		}

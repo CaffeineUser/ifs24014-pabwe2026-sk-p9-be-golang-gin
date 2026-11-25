@@ -27,6 +27,13 @@ RUN apk add --no-cache ca-certificates tzdata
 # Copy binary from builder
 COPY --from=builder /app/server .
 
+# Default configuration environment variables
+ENV OPENAI_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai \
+    OPENAI_MODEL=gemini-3.5-flash-lite \
+    RATE_LIMIT_GLOBAL=10000 \
+    RATE_LIMIT_AUTH=10000 \
+    RATE_LIMIT_AI=1000
+
 # Expose default application port
 EXPOSE 8080
 

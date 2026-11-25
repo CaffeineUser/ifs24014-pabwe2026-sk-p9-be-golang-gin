@@ -192,17 +192,30 @@ func (s *Service) GetOwned(id, userID uint) (*PostResponse, error) {
 
 // Update tidak mengubah slug agar tautan lama tetap berlaku.
 func (s *Service) Update(id, userID uint, req PostRequest) (*PostResponse, error) {
-	req, err := normalize(req)
-	if err != nil {
-		return nil, err
-	}
-
 	post, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
 	if post.UserID != userID {
 		return nil, ErrForbidden
+	}
+
+	if req.Category == "" {
+		req.Category = post.Category
+	}
+	if req.Content == "" {
+		req.Content = post.Content
+	}
+	if req.Excerpt == "" {
+		req.Excerpt = post.Excerpt
+	}
+	if req.CoverImagePath == "" {
+		req.CoverImagePath = post.CoverImagePath
+	}
+
+	req, err = normalize(req)
+	if err != nil {
+		return nil, err
 	}
 
 	post.Title = req.Title
@@ -285,20 +298,20 @@ func (s *Service) Stats(userID uint) (*StatsResponse, error) {
 
 // ---------- Publik ----------
 
-func (s *Service) ListPublished(q, category string) ([]PostResponse, error) {
+func (s *Service) ListPublished(q, category string) ([]PublicPostResponse, error) {
 	posts, err := s.repo.ListPublished(strings.TrimSpace(q), strings.TrimSpace(category))
 	if err != nil {
 		return nil, err
 	}
-	return toSummaries(posts), nil
+	return toPublicSummaries(posts), nil
 }
 
-func (s *Service) GetPublished(slug string) (*PostResponse, error) {
+func (s *Service) GetPublished(slug string) (*PublicPostResponse, error) {
 	post, err := s.repo.FindPublishedBySlug(slug)
 	if err != nil {
 		return nil, err
 	}
-	res := toResponse(*post, true)
+	res := toPublicResponse(*post, true)
 	return &res, nil
 }
 

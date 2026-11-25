@@ -156,7 +156,7 @@ func (s *Service) Generate(ctx context.Context, req GenerateRequest) (*GenerateR
 	length := utf8.RuneCountInString(topic)
 	switch {
 	case length < minTopicLength || length > maxTopicLength:
-		return nil, &ValidationError{Message: "Topik wajib diisi (3-200 karakter)"}
+		return nil, &ValidationError{Message: "Topic / topik wajib diisi (3-200 karakter)"}
 	case category != "" && !post.IsValidCategory(category):
 		return nil, &ValidationError{Message: "Kategori tidak valid. Pilihan: " + strings.Join(post.Categories, ", ")}
 	}
